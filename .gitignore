@@ -1,0 +1,71 @@
+# =========================
+# Mac OS
+# =========================
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon must end with two \r
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# =========================
+# C# / .NET
+# =========================
+# Build Folders
+bin/
+obj/
+out/
+
+# Visual Studio / Rider / VS Code
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+.vscode/
+
+# NuGet
+*.nupkg
+packages/
+.nuget/
+
+# Rider
+.idea/
+
+# Logs
+*.log
+
+# Debug / Release
+Debug/
+Release/
+
+# Temporary files
+*.tmp
+*.temp
+*.cache
+
+# Publish output
+publish/
+
+# ASP.NET / web
+*.dbmdl
+*.bak
+*.backup
+
+# JetBrains Rider
+.idea/
+
+# Resharper
+_ReSharper*/
+*.ReSharper
+*.DotSettings.user
+
+# Others
+*.DS_Store
+*.swp
