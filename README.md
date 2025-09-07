@@ -25,6 +25,10 @@ At this point, theres not an automated way to reset the running balance other th
 
 You can also run `tools/set-balance.sh` to put a dummy transaction into the collection so you can correct the current balance if you need to.
 
+### Todo
+- tests
+- automate resetting the balance every month
+
 ### Rant
 All I want is an easy way to know what my credit card balance is relative to my budget for the month.  The Chase app is fine, but I have to log in to use that.  Even with FaceID, its enough of a hassle that I just don't check as frequently as I would like to.  Other "budgeting" and personal finance apps are truly terrible.  Aside from the pain and privacy concerns of linking your financial institutions, you have to deal with shitty UIs, way too many notifications, ads, and then at the end of the day its usually still not exactly what you want.
 
