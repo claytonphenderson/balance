@@ -4,6 +4,7 @@ using MailKit.Net.Imap;
 using MailKit.Search;
 using MailKit.Security;
 using Microsoft.Extensions.Caching.Memory;
+using MimeKit;
 
 namespace WorkerHost;
 
@@ -41,7 +42,10 @@ public class EmailWorker : BackgroundService
 
                     foreach (var uid in inbox.Search(query))
                     {
-                        await ProcessIncoming(inbox, uid);
+                        var message = await inbox.GetMessageAsync(uid);
+                        if (message == null) continue;
+
+                        ProcessIncoming(message, uid);
                     }
 
                     await client.DisconnectAsync(true);
@@ -70,7 +74,7 @@ public class EmailWorker : BackgroundService
         return inbox;
     }
 
-    public async Task ProcessIncoming(IMailFolder inbox, UniqueId uid)
+    private void ProcessIncoming(IMimeMessage message, UniqueId uid)
     {
         try
         {
@@ -78,28 +82,13 @@ public class EmailWorker : BackgroundService
             if (_cache.Get(uid) != null) return;
 
             // Get messages since last run since IMAP server doesn't seem to support more granular filtering.
-            var message = await inbox.GetMessageAsync(uid);
             if (DateTimeOffset.Compare(message.Date, DateTimeOffset.Now.AddDays(-1)) < 0) return;
 
-            // Parse out interesting info
-            var parsedTotalSuccessfully = Double.TryParse(message.Subject.Replace("$", "").Split(" ")[3], out var totalCost);
-            if (!parsedTotalSuccessfully)
-            {
-                _logger.LogError($"Could not parse total for subject {message.Subject}");
-                return;
-            }
-
-            var merchant = message.Subject.Split("transaction with")[1].Trim();
+            var expense = EmailHelpers.ParseMessage(message, uid);
+            if (expense == null) return;
 
             // Push to channel to be consumed in a separate worker
-            _channel.Writer.TryWrite(new IncomingExpenseEmail
-            {
-                Id = uid.ToString(),
-                Date = DateTime.UtcNow,
-                RawSubject = message.Subject,
-                Total = totalCost,
-                Merchant = merchant,
-            });
+            _channel.Writer.TryWrite(expense);
 
             _logger.LogInformation($"Pushed message {uid} to expense processing queue");
 

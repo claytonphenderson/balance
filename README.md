@@ -26,7 +26,6 @@ At this point, theres not an automated way to reset the running balance other th
 You can also run `tools/set-balance.sh` to put a dummy transaction into the collection so you can correct the current balance if you need to.
 
 ### Todo
-- tests
 - automate resetting the balance every month
 
 ### Rant

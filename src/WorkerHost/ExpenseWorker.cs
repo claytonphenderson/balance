@@ -36,7 +36,10 @@ public class ExpenseWorker : BackgroundService
                 //perform aggregation to get current balance
                 var summary = await AggregateSpend();
                 // email the user
-                await SendEmail(summary);
+                using (var client = new SmtpClient())
+                {
+                    await SendEmail(client, summary);
+                }
             }
             catch (Exception e)
             {
@@ -76,7 +79,7 @@ public class ExpenseWorker : BackgroundService
     /// <summary>
     /// Gets the running balance and calculate the percent of budget currently used.
     /// </summary>
-    private async Task<Summary> AggregateSpend()
+    public async Task<Summary> AggregateSpend()
     {
         var result = await _collection.Aggregate()
             .Group(new BsonDocument
@@ -97,32 +100,17 @@ public class ExpenseWorker : BackgroundService
     /// <summary>
     /// Send a summary email with aggregation results via SMTP.
     /// </summary>
-    private async Task SendEmail(Summary summary)
+    public async Task SendEmail(SmtpClient client, Summary summary)
     {
-        var message = new MimeMessage();
-        message.From.Add(new MailboxAddress("Balance", _configuration["EmailFrom"]));
-        var recipients = _configuration.GetSection("EmailTo").Get<string[]>() ?? throw new Exception("No recipients specified");
+        var message = EmailHelpers.BuildMessage(summary,
+            _configuration.GetSection("EmailTo").Get<string[]>() ?? throw new Exception("to is missing"),
+            _configuration["EmailFrom"] ?? throw new Exception("from is missing"));
 
-        foreach (var recipient in recipients)
-        {
-            message.To.Add(new MailboxAddress(recipient, recipient));
-        }
-        var dot = summary.PercentOfLimit > 85 ? "🔴" : summary.PercentOfLimit > 60 ? "🟡" : "🟢";
-        message.Subject = $"{dot} You are at {summary.PercentOfLimit}% of budget";
+        await client.ConnectAsync("smtp.gmail.com", 587, MailKit.Security.SecureSocketOptions.StartTls);
+        await client.AuthenticateAsync(_configuration["EmailFrom"], _configuration["EmailAppPassword"]); // app password here
+        await client.SendAsync(message);
+        await client.DisconnectAsync(true);
 
-        message.Body = new TextPart("plain")
-        {
-            Text = $"{dot} You are at {summary.PercentOfLimit}% of budget. The current balance is ${summary.Balance}."
-        };
-
-        using (var client = new SmtpClient())
-        {
-            await client.ConnectAsync("smtp.gmail.com", 587, MailKit.Security.SecureSocketOptions.StartTls);
-            await client.AuthenticateAsync(_configuration["EmailFrom"], _configuration["EmailAppPassword"]); // app password here
-            await client.SendAsync(message);
-            await client.DisconnectAsync(true);
-
-            _logger.LogInformation("Sent email to recipients");
-        }
+        _logger.LogInformation("Sent email to recipients");
     }
 }
