@@ -7,7 +7,7 @@ public record IncomingExpenseEmail
 {
     [BsonId]
     [BsonRepresentation(BsonType.String)]
-    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public required string Id { get; set; }
     public object Meta = new object { };
     public DateTime Date;
     public double Total;

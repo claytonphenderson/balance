@@ -11,13 +11,13 @@ namespace WorkerHost;
 
 public class ExpenseWorker : BackgroundService
 {
-    private readonly ILogger<EmailWorker> _logger;
+    private readonly ILogger<ExpenseWorker> _logger;
     private readonly Channel<IncomingExpenseEmail> _channel;
     private readonly IMongoCollection<IncomingExpenseEmail> _collection;
     private readonly Subject<Unit> _expenseReceivedSubject = new Subject<Unit>();
     private readonly IConfiguration _configuration;
 
-    public ExpenseWorker(ILogger<EmailWorker> logger,
+    public ExpenseWorker(ILogger<ExpenseWorker> logger,
     Channel<IncomingExpenseEmail> channel,
     IMongoCollection<IncomingExpenseEmail> collection,
     IConfiguration configuration)
@@ -40,7 +40,7 @@ public class ExpenseWorker : BackgroundService
             }
             catch (Exception e)
             {
-                _logger.LogError($"Could not aggregate and send email. {e.Message}");
+                _logger.LogError(e, $"Could not aggregate and send email.");
             }
         });
     }
@@ -49,11 +49,27 @@ public class ExpenseWorker : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            await _channel.Reader.WaitToReadAsync();
-            var incoming = await _channel.Reader.ReadAsync();
-            _logger.LogInformation($"Received incoming expense from {incoming.Merchant}");
-            await _collection.InsertOneAsync(incoming);
-            _expenseReceivedSubject.OnNext(Unit.Default);
+            try
+            {
+                await _channel.Reader.WaitToReadAsync();
+                var incoming = await _channel.Reader.ReadAsync();
+                _logger.LogInformation($"Received incoming expense from {incoming.Merchant}");
+
+                // since we are using email uid as the id of the document, we expect
+                // this will throw if its a duplicate
+                await _collection.InsertOneAsync(incoming);
+
+                // tell our observable that we processed a new expense
+                _expenseReceivedSubject.OnNext(Unit.Default);
+            }
+            catch (MongoWriteException m)
+            {
+                _logger.LogDebug(m, "Mongo refused a duplicate key. This is probably indicative of restarting the app");
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Could not process expense worker task");
+            }
         }
     }
 
@@ -85,7 +101,8 @@ public class ExpenseWorker : BackgroundService
     {
         var message = new MimeMessage();
         message.From.Add(new MailboxAddress("Balance", _configuration["EmailFrom"]));
-        var recipients = _configuration.GetSection("EmailTo").Get<string[]>();
+        var recipients = _configuration.GetSection("EmailTo").Get<string[]>() ?? throw new Exception("No recipients specified");
+
         foreach (var recipient in recipients)
         {
             message.To.Add(new MailboxAddress(recipient, recipient));
@@ -104,6 +121,8 @@ public class ExpenseWorker : BackgroundService
             await client.AuthenticateAsync(_configuration["EmailFrom"], _configuration["EmailAppPassword"]); // app password here
             await client.SendAsync(message);
             await client.DisconnectAsync(true);
+
+            _logger.LogInformation("Sent email to recipients");
         }
     }
 }

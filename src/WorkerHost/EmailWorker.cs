@@ -10,7 +10,6 @@ namespace WorkerHost;
 public class EmailWorker : BackgroundService
 {
     private readonly ILogger<EmailWorker> _logger;
-    private readonly ImapClient _client = new ImapClient();
     private readonly Channel<IncomingExpenseEmail> _channel;
     private readonly IConfiguration _configuration;
     private readonly MemoryCache _cache;
@@ -25,84 +24,94 @@ public class EmailWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var inbox = Reconnect();
-        _logger.LogInformation($"Connected. {inbox.Count} messages in inbox.");
-
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                // Delivered today and contains the magic subject
-                var query = SearchQuery.DeliveredAfter(DateTime.Now)
-                    .And(SearchQuery.SubjectContains("You made a")
-                    .And(SearchQuery.SubjectContains("transaction with")));
-
-                foreach (var uid in inbox.Search(query))
+                using (var client = new ImapClient())
                 {
-                    await ProcessIncoming(inbox, uid);
-                }
+                    var inbox = await GetImapInbox(client);
+                    _logger.LogDebug("Checking inbox...");
+                    
+                    // Delivered today (this method ignores time, just looks at day) 
+                    // and contains the magic subject
+                    var query = SearchQuery.DeliveredAfter(DateTime.Now)
+                        .And(SearchQuery.SubjectContains("You made a")
+                        .And(SearchQuery.SubjectContains("transaction with")));
 
-                // Wait 10s before executing again.
-                Thread.Sleep(10_000);
+                    foreach (var uid in inbox.Search(query))
+                    {
+                        await ProcessIncoming(inbox, uid);
+                    }
+
+                    await client.DisconnectAsync(true);
+                }
             }
             catch (Exception e)
             {
                 _logger.LogError("Caught error in processing " + e.Message);
-                _logger.LogInformation("Reconnecting...");
-                Thread.Sleep(10_000);
-                inbox = Reconnect();
-                _logger.LogInformation("Reconnected");
+            }
+            finally
+            {
+                Thread.Sleep(60_000);
             }
         }
     }
 
-    private IMailFolder Reconnect()
+    private async Task<IMailFolder> GetImapInbox(ImapClient client)
     {
-        if (_client.IsConnected) _client.Disconnect(true);
+        if (client.IsConnected) await client.DisconnectAsync(true);
 
-        _client.Connect("imap.gmail.com", 993, SecureSocketOptions.SslOnConnect);
-        _client.Authenticate(_configuration["EmailFrom"], _configuration["EmailAppPassword"]);
+        await client.ConnectAsync("imap.gmail.com", 993, SecureSocketOptions.SslOnConnect);
+        await client.AuthenticateAsync(_configuration["EmailFrom"], _configuration["EmailAppPassword"]);
 
-        var inbox = _client.Inbox;
-        inbox.Open(FolderAccess.ReadOnly);
+        var inbox = client.Inbox;
+        await inbox.OpenAsync(FolderAccess.ReadOnly);
         return inbox;
     }
 
     public async Task ProcessIncoming(IMailFolder inbox, UniqueId uid)
     {
-        // Make sure you don't double process messages
-        if (_cache.Get(uid) != null) return;
-
-        // Get messages since last run since IMAP server doesn't seem to support more granular filtering.  Also 
-        // using last 30 seconds here specifically allowing for overlap with previous runs so we don't miss any
-        var message = await inbox.GetMessageAsync(uid);
-        if (DateTimeOffset.Compare(message.Date, DateTimeOffset.Now.AddSeconds(-30)) < 0) return;
-
-        // Parse out interesting info
-        var parsedTotalSuccessfully = Double.TryParse(message.Subject.Replace("$", "").Split(" ")[3], out var totalCost);
-        if (!parsedTotalSuccessfully)
+        try
         {
-            _logger.LogError($"Could not parse total for subject {message.Subject}");
-            return;
+            // Avoid double processing messages
+            if (_cache.Get(uid) != null) return;
+
+            // Get messages since last run since IMAP server doesn't seem to support more granular filtering.
+            var message = await inbox.GetMessageAsync(uid);
+            if (DateTimeOffset.Compare(message.Date, DateTimeOffset.Now.AddDays(-1)) < 0) return;
+
+            // Parse out interesting info
+            var parsedTotalSuccessfully = Double.TryParse(message.Subject.Replace("$", "").Split(" ")[3], out var totalCost);
+            if (!parsedTotalSuccessfully)
+            {
+                _logger.LogError($"Could not parse total for subject {message.Subject}");
+                return;
+            }
+
+            var merchant = message.Subject.Split("transaction with")[1].Trim();
+
+            // Push to channel to be consumed in a separate worker
+            _channel.Writer.TryWrite(new IncomingExpenseEmail
+            {
+                Id = uid.ToString(),
+                Date = DateTime.UtcNow,
+                RawSubject = message.Subject,
+                Total = totalCost,
+                Merchant = merchant,
+            });
+
+            _logger.LogInformation($"Pushed message {uid} to expense processing queue");
+
+            // Remember that we processed this email
+            _cache.Set(uid, uid, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(1)
+            });
         }
-
-        var merchant = message.Subject.Split("transaction with")[1].Trim();
-
-        // Push to channel to be consumed in a separate worker
-        _channel.Writer.TryWrite(new IncomingExpenseEmail
+        catch (Exception e)
         {
-            Date = DateTime.UtcNow,
-            RawSubject = message.Subject,
-            Total = totalCost,
-            Merchant = merchant,
-        });
-
-        _logger.LogInformation($"Pushed message {uid} to expense processing queue");
-
-        // Remember that we processed this email
-        _cache.Set(uid, uid, new MemoryCacheEntryOptions
-        {
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1)
-        });
+            _logger.LogError(e, "Error when attempting to process incoming email");
+        }
     }
 }

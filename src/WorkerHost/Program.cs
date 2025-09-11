@@ -1,9 +1,17 @@
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging.Console;
 using MongoDB.Bson.Serialization.Conventions;
 using MongoDB.Driver;
 using WorkerHost;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Logging.ClearProviders();
+builder.Logging.AddSimpleConsole(options =>
+    {
+        options.SingleLine = true;
+        options.TimestampFormat = "HH:mm:ss ";
+        options.ColorBehavior = LoggerColorBehavior.Enabled;
+    });
 
 builder.Services.AddHostedService<EmailWorker>();
 builder.Services.AddHostedService<ExpenseWorker>();
@@ -28,10 +36,7 @@ builder.Services.AddSingleton<IMongoCollection<IncomingExpenseEmail>>(x =>
     var client = x.GetRequiredService<MongoClient>();
     var db = client.GetDatabase("balance");
     // creates if not existing
-    db.CreateCollection("expenses", new CreateCollectionOptions
-    {
-        TimeSeriesOptions = new TimeSeriesOptions("date", "meta", TimeSeriesGranularity.Minutes)
-    });
+    db.CreateCollection("expenses");
 
     return db.GetCollection<IncomingExpenseEmail>("expenses");
 });
