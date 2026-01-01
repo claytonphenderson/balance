@@ -1,26 +1,30 @@
 using System.Threading.Channels;
+using System.Threading.Tasks;
 using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Search;
 using MailKit.Security;
 using Microsoft.Extensions.Caching.Memory;
 using MimeKit;
+using MongoDB.Driver;
 
 namespace WorkerHost;
 
-public class EmailWorker : BackgroundService
+public class IngressWorker : BackgroundService
 {
-    private readonly ILogger<EmailWorker> _logger;
-    private readonly Channel<IncomingExpenseEmail> _channel;
+    private readonly ILogger<IngressWorker> _logger;
+    private readonly Channel<Expense> _channel;
     private readonly IConfiguration _configuration;
     private readonly MemoryCache _cache;
+    private readonly IMongoCollection<Expense> _collection;
 
-    public EmailWorker(ILogger<EmailWorker> logger, Channel<IncomingExpenseEmail> channel, IConfiguration configuration)
+    public IngressWorker(ILogger<IngressWorker> logger, Channel<Expense> channel, IConfiguration configuration, IMongoCollection<Expense> collection)
     {
         _logger = logger;
         _channel = channel;
         _configuration = configuration;
         _cache = new MemoryCache(new MemoryCacheOptions());
+        _collection = collection;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -33,7 +37,7 @@ public class EmailWorker : BackgroundService
                 {
                     var inbox = await GetImapInbox(client);
                     _logger.LogDebug("Checking inbox...");
-                    
+
                     // Delivered today (this method ignores time, just looks at day) 
                     // and contains the magic subject
                     var query = SearchQuery.DeliveredAfter(DateTime.Now)
@@ -45,7 +49,7 @@ public class EmailWorker : BackgroundService
                         var message = await inbox.GetMessageAsync(uid);
                         if (message == null) continue;
 
-                        ProcessIncoming(message, uid);
+                        await ProcessIncoming(message, uid);
                     }
 
                     await client.DisconnectAsync(true);
@@ -74,7 +78,7 @@ public class EmailWorker : BackgroundService
         return inbox;
     }
 
-    private void ProcessIncoming(IMimeMessage message, UniqueId uid)
+    private async Task ProcessIncoming(IMimeMessage message, UniqueId uid)
     {
         try
         {
@@ -87,11 +91,23 @@ public class EmailWorker : BackgroundService
             var expense = EmailHelpers.ParseMessage(message, uid);
             if (expense == null) return;
 
+            // Store in MongoDB.  Will throw an exception if duplicate.
+            await _collection.InsertOneAsync(expense);
+
             // Push to channel to be consumed in a separate worker
-            _channel.Writer.TryWrite(expense);
+            await _channel.Writer.WriteAsync(expense);
 
             _logger.LogInformation($"Pushed message {uid} to expense processing queue");
 
+            // Remember that we processed this email
+            _cache.Set(uid, uid, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(1)
+            });
+        }
+        catch (MongoWriteException e) when (e.WriteError.Category == ServerErrorCategory.DuplicateKey)
+        {
+            _logger.LogWarning(e, $"Duplicate key detected {uid.ToString()}, email has already been processed. Skipping");
             // Remember that we processed this email
             _cache.Set(uid, uid, new MemoryCacheEntryOptions
             {

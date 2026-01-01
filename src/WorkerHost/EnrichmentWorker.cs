@@ -9,23 +9,26 @@ using MongoDB.Driver;
 
 namespace WorkerHost;
 
-public class ExpenseWorker : BackgroundService
+public class EnrichmentWorker : BackgroundService
 {
-    private readonly ILogger<ExpenseWorker> _logger;
-    private readonly Channel<IncomingExpenseEmail> _channel;
-    private readonly IMongoCollection<IncomingExpenseEmail> _collection;
+    private readonly ILogger<EnrichmentWorker> _logger;
+    private readonly Channel<Expense> _channel;
+    private readonly IMongoCollection<Expense> _collection;
     private readonly Subject<Unit> _expenseReceivedSubject = new Subject<Unit>();
     private readonly IConfiguration _configuration;
+    private readonly ExpenseCategorizer _expenseCategorizer;
 
-    public ExpenseWorker(ILogger<ExpenseWorker> logger,
-    Channel<IncomingExpenseEmail> channel,
-    IMongoCollection<IncomingExpenseEmail> collection,
-    IConfiguration configuration)
+    public EnrichmentWorker(ILogger<EnrichmentWorker> logger,
+    Channel<Expense> channel,
+    IMongoCollection<Expense> collection,
+    IConfiguration configuration,
+    ExpenseCategorizer expenseCategorizer)
     {
         _logger = logger;
         _channel = channel;
         _collection = collection;
         _configuration = configuration;
+        _expenseCategorizer = expenseCategorizer;
 
         // triggering the spend aggregation and summary email after 30 seconds of inactivity
         // so you don't get a ton of emails if you run the card several times quickly
@@ -56,18 +59,18 @@ public class ExpenseWorker : BackgroundService
             {
                 await _channel.Reader.WaitToReadAsync();
                 var incoming = await _channel.Reader.ReadAsync();
-                _logger.LogInformation($"Received incoming expense from {incoming.Merchant}");
+                if (incoming.Merchant != null)
+                {
+                    var category = await _expenseCategorizer.CategorizeMerchant(incoming.Merchant);
+                    _logger.LogInformation($"Categorized merchant {incoming.Merchant} as {category}");
+                    await _collection.FindOneAndUpdateAsync(
+                        Builders<Expense>.Filter.Eq(e => e.Id, incoming.Id),
+                        Builders<Expense>.Update
+                            .Set(e => e.Category, category)
+                            .Set(e => e.CategorizedDate, DateTime.UtcNow)
+                    );
+                }
 
-                // since we are using email uid as the id of the document, we expect
-                // this will throw if its a duplicate
-                await _collection.InsertOneAsync(incoming);
-
-                // tell our observable that we processed a new expense
-                _expenseReceivedSubject.OnNext(Unit.Default);
-            }
-            catch (MongoWriteException m)
-            {
-                _logger.LogDebug(m, "Mongo refused a duplicate key. This is probably indicative of restarting the app");
             }
             catch (Exception e)
             {

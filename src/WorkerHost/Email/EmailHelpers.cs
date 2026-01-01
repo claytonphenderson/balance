@@ -4,7 +4,7 @@ using WorkerHost;
 
 public static class EmailHelpers
 {
-    public static IncomingExpenseEmail? ParseMessage(IMimeMessage message, UniqueId uid)
+    public static Expense? ParseMessage(IMimeMessage message, UniqueId uid)
     {
         var parsedTotalSuccessfully = Double.TryParse(message.Subject.Replace("$", "").Split(" ")[3], out var totalCost);
         if (!parsedTotalSuccessfully)
@@ -13,13 +13,14 @@ public static class EmailHelpers
         }
 
         var merchant = message.Subject.Split("transaction with")[1].Trim();
-        return new IncomingExpenseEmail
+        return new Expense
         {
             Id = uid.ToString(),
             Date = message.Date.DateTime,
             RawSubject = message.Subject,
             Total = totalCost,
             Merchant = merchant,
+            IngressDate = DateTime.UtcNow
         };
     }
 
