@@ -24,7 +24,7 @@ builder.Services.AddSingleton<ChatClient>(c =>
 {
     var configuration = c.GetRequiredService<IConfiguration>();
     Uri openaiEndpoint = new Uri("https://clayt-mju9na87-eastus.cognitiveservices.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2025-01-01-preview");
-    string apiKey = "";
+    // string apiKey = "";
     AzureOpenAIClient client = new(openaiEndpoint, new AzureKeyCredential(apiKey));
     return client.GetChatClient("gpt-4.1-mini");
 });
