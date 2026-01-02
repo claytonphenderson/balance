@@ -29,7 +29,7 @@ public class IngressWorker(
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
+            logger.LogInformation("Ingress worker running at: {time}", DateTimeOffset.Now);
             var messages = await emailService.GetTransactionEmails();
             foreach (var message in messages)
             {
@@ -46,8 +46,8 @@ public class IngressWorker(
                 // Avoid double processing messages
                 if (_cache.Get(message.MessageId) != null) return;
 
-                // Get messages since last run since IMAP server doesn't seem to support more granular filtering.
-                if (DateTimeOffset.Compare(message.Date, DateTimeOffset.Now.AddDays(-10)) < 0) return;
+                // Get messages since last day since IMAP server doesn't seem to support more granular filtering.
+                if (DateTimeOffset.Compare(message.Date, DateTimeOffset.Now.AddDays(-1)) < 0) return;
                 logger.LogInformation($"Processing incoming message {message.MessageId}");
 
                 var expense = emailService.ParseMessage(message);

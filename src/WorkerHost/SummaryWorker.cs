@@ -72,7 +72,7 @@ public class SummaryWorker:BackgroundService
             }).ToListAsync();
 
         var categoryTotals = result.ToDictionary(
-            r => r["_id"].AsString,
+            r => (!r["_id"].IsBsonNull ? r["_id"].AsString : "Uncategorized"),
             r => r["total"].AsDouble
         );
 
