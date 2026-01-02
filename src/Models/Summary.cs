@@ -1,4 +1,4 @@
-namespace WorkerHost;
+namespace Models;
 
 public record Summary
 {

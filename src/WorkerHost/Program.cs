@@ -1,7 +1,13 @@
+using System.Reactive;
+using System.Reactive.Linq;
+using System.Reactive.Subjects;
 using System.Threading.Channels;
 using Azure;
 using Azure.AI.OpenAI;
+using Enrichment;
+using Messaging;
 using Microsoft.Extensions.Logging.Console;
+using Models;
 using MongoDB.Bson.Serialization.Conventions;
 using MongoDB.Driver;
 using OpenAI.Chat;
@@ -18,17 +24,20 @@ builder.Logging.AddSimpleConsole(options =>
 
 builder.Services.AddHostedService<IngressWorker>();
 builder.Services.AddHostedService<EnrichmentWorker>();
-builder.Services.AddSingleton(Channel.CreateUnbounded<Expense>());
+builder.Services.AddHostedService<SummaryWorker>();
+
+builder.Services.AddSingleton<WorkerChannels>();
 builder.Services.AddSingleton<ExpenseCategorizer>();
+builder.Services.AddSingleton<EmailService>();
 builder.Services.AddSingleton<ChatClient>(c =>
 {
     var configuration = c.GetRequiredService<IConfiguration>();
-    Uri openaiEndpoint = new Uri("https://clayt-mju9na87-eastus.cognitiveservices.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2025-01-01-preview");
-    // string apiKey = "";
+    Uri openaiEndpoint = new Uri(configuration["AzOpenAIEndpoint"]);
+    string apiKey = configuration["AzOpenAIApiKey"];
     AzureOpenAIClient client = new(openaiEndpoint, new AzureKeyCredential(apiKey));
     return client.GetChatClient("gpt-4.1-mini");
 });
-
+builder.Services.AddSingleton<Subject<Unit>>();
 
 // Mongo setup
 ConventionRegistry.Register(

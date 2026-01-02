@@ -1,7 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
-namespace WorkerHost;
+namespace Models;
 
 public class Expense
 {
@@ -13,6 +13,6 @@ public class Expense
     public string? Merchant { get; init; }
     public required string RawSubject { get; init; }
     public required DateTime IngressDate { get; init; }
-    public string? Category { get; set; }
+    public string Category { get; set; } = "Uncategorized";
     public DateTime? CategorizedDate { get; set; }
 }
