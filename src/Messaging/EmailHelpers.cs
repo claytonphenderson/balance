@@ -59,7 +59,11 @@ public class EmailService(IConfiguration configuration,
         return message;
     }
 
-    public async Task<IEnumerable<MimeMessage>> GetTransactionEmails()
+    /**
+     * Get all transaction emails from the last day.  Optionally provide a cache to avoid re-loading
+     * emails that you have already seen.
+     */
+    public async Task<IEnumerable<UniqueId>> QueryInboxForTransactions()
     {
         try
         {
@@ -72,23 +76,38 @@ public class EmailService(IConfiguration configuration,
                 .And(SearchQuery.SubjectContains("You made a")
                     .And(SearchQuery.SubjectContains("transaction with")));
 
-            var messages = new List<MimeMessage>();
-            foreach (var uid in inbox.Search(query))
+            return inbox.Search(query);
+        }
+        catch (Exception e)
+        {
+            logger.LogError(e, "An error occured getting transaction email Ids");
+            return Array.Empty<UniqueId>();
+        }
+    }
+    
+    public async Task<IEnumerable<MimeMessage>> DownloadEmails(IEnumerable<UniqueId>  uniqueIds)
+    {
+        using var client = new ImapClient();
+        var inbox = await GetImapInbox(client);
+
+        var messages = new List<MimeMessage>();
+        foreach (var uid in uniqueIds)
+        {
+            try
             {
                 logger.LogInformation($"Searching for email {uid}");
                 var message = await inbox.GetMessageAsync(uid);
                 if (message == null) continue;
                 messages.Add(message);
             }
+            catch (Exception e)
+            {
+                logger.LogError(e, $"An error occured downloading email {uid}");
+            }
+        }
 
-            await client.DisconnectAsync(true);
-            return messages;
-        }
-        catch (Exception e)
-        {
-            logger.LogError(e, "An error occured getting transaction emails");
-            return Array.Empty<MimeMessage>();
-        }
+        await client.DisconnectAsync(true);
+        return messages;
     }
     
     private async Task<IMailFolder> GetImapInbox(ImapClient client)

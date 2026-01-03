@@ -67,12 +67,12 @@ public class SummaryWorker:BackgroundService
         var result = await _collection.Aggregate()
             .Group(new BsonDocument
             {
-                { "_id", "$category" },
+                { "_id", new BsonDocument("$ifNull", new BsonArray { "$category", "Uncategorized" }) },
                 { "total", new BsonDocument("$sum", "$total") }
             }).ToListAsync();
 
         var categoryTotals = result.ToDictionary(
-            r => (!r["_id"].IsBsonNull ? r["_id"].AsString : "Uncategorized"),
+            r => r["_id"].AsString,
             r => r["total"].AsDouble
         );
 

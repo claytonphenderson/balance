@@ -1,6 +1,5 @@
 using System.Reactive;
 using System.Reactive.Subjects;
-using System.Threading.Channels;
 using Messaging;
 using Microsoft.Extensions.Caching.Memory;
 using MimeKit;
@@ -30,11 +29,28 @@ public class IngressWorker(
         while (!stoppingToken.IsCancellationRequested)
         {
             logger.LogInformation("Ingress worker running at: {time}", DateTimeOffset.Now);
-            var messages = await emailService.GetTransactionEmails();
+            // Get all transaction messages from last day
+            var messageIds = await emailService.QueryInboxForTransactions();
+            // filter out the ones we've aready seen
+            var filtered = messageIds.Where(x => _cache.Get(x) == null).ToList();
+            // download the emails
+            var messages = await emailService.DownloadEmails(filtered);
+            
+            // process each of those
             foreach (var message in messages)
             {
                 await ProcessIncoming(message);
             }
+            
+            // remember that we've seen them and avoid re-loading them from inbox
+            filtered.ForEach(uid =>
+            {
+                _cache.Set(uid, uid, new MemoryCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(1)
+                });
+            });
+            
             Thread.Sleep(60_000);
         }
     }
@@ -43,13 +59,7 @@ public class IngressWorker(
         {
             try
             {
-                // Avoid double processing messages
-                if (_cache.Get(message.MessageId) != null) return;
-
-                // Get messages since last day since IMAP server doesn't seem to support more granular filtering.
-                if (DateTimeOffset.Compare(message.Date, DateTimeOffset.Now.AddDays(-1)) < 0) return;
                 logger.LogInformation($"Processing incoming message {message.MessageId}");
-
                 var expense = emailService.ParseMessage(message);
                 if (expense == null) return;
 
@@ -61,22 +71,11 @@ public class IngressWorker(
                 newMessageSubject.OnNext(Unit.Default);
 
                 logger.LogInformation($"Pushed message {message.MessageId} to expense processing queue");
-
-                // Remember that we processed this email
-                _cache.Set(message.MessageId, message.MessageId, new MemoryCacheEntryOptions
-                {
-                    AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(1)
-                });
             }
             catch (MongoWriteException e) when (e.WriteError.Category == ServerErrorCategory.DuplicateKey)
             {
                 logger.LogWarning(e,
                     $"Duplicate key detected {message.MessageId}, email has already been processed. Skipping");
-                // Remember that we processed this email
-                _cache.Set(message.MessageId, message.MessageId, new MemoryCacheEntryOptions
-                {
-                    AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(1)
-                });
             }
             catch (Exception e)
             {
